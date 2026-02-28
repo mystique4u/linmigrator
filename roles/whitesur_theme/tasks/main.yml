@@ -1,0 +1,262 @@
+---
+# WhiteSur GTK theme installation role for GNOME
+
+- name: WhiteSur theme banner
+  debug:
+    msg: |
+      ╔════════════════════════════════════════════════════════════╗
+      ║        Installing WhiteSur Theme (macOS-like)             ║
+      ╚════════════════════════════════════════════════════════════╝
+
+- name: Install GNOME Tweaks and extensions
+  dnf:
+    name:
+      - gnome-tweaks
+      - gnome-extensions-app
+      - gnome-shell-extensions
+      - chrome-gnome-shell
+    state: present
+
+- name: Install dependencies for theme installation
+  dnf:
+    name:
+      - git
+      - gtk-murrine-engine
+      - gtk2-engines
+      - sassc
+      - optipng
+      - inkscape
+      - glib2-devel
+    state: present
+  ignore_errors: yes
+
+- name: Create temporary directory for theme installation
+  tempfile:
+    state: directory
+    suffix: whitesur
+  register: theme_temp_dir
+
+- name: Clone WhiteSur GTK theme repository
+  git:
+    repo: https://github.com/vinceliuice/WhiteSur-gtk-theme.git
+    dest: "{{ theme_temp_dir.path }}/WhiteSur-gtk-theme"
+    depth: 1
+    version: master
+
+- name: Install WhiteSur GTK theme
+  shell: |
+    cd {{ theme_temp_dir.path }}/WhiteSur-gtk-theme
+    ./install.sh --alt --round --default --{{ whitesur.theme_variant | default('dark') }}
+  args:
+    executable: /bin/bash
+  environment:
+    DEST: /usr/share/themes
+
+- name: Install WhiteSur GTK theme for all users
+  shell: |
+    cd {{ theme_temp_dir.path }}/WhiteSur-gtk-theme
+    ./install.sh --alt --round --default --{{ whitesur.theme_variant | default('dark') }}
+  args:
+    executable: /bin/bash
+  become_user: "{{ item.name }}"
+  loop: "{{ ubuntu_system.users | default([]) }}"
+  when:
+    - ubuntu_system is defined
+    - item.uid >= 1000
+  ignore_errors: yes
+
+- name: Clone WhiteSur icon theme
+  git:
+    repo: https://github.com/vinceliuice/WhiteSur-icon-theme.git
+    dest: "{{ theme_temp_dir.path }}/WhiteSur-icon-theme"
+    depth: 1
+    version: master
+  when: whitesur.icon_theme | default(true)
+
+- name: Install WhiteSur icon theme
+  shell: |
+    cd {{ theme_temp_dir.path }}/WhiteSur-icon-theme
+    ./install.sh --{{ whitesur.theme_variant | default('dark') }}
+  args:
+    executable: /bin/bash
+  when: whitesur.icon_theme | default(true)
+
+- name: Install WhiteSur icon theme for all users
+  shell: |
+    cd {{ theme_temp_dir.path }}/WhiteSur-icon-theme
+    ./install.sh --{{ whitesur.theme_variant | default('dark') }}
+  args:
+    executable: /bin/bash
+  become_user: "{{ item.name }}"
+  loop: "{{ ubuntu_system.users | default([]) }}"
+  when:
+    - whitesur.icon_theme | default(true)
+    - ubuntu_system is defined
+    - item.uid >= 1000
+  ignore_errors: yes
+
+- name: Clone WhiteSur cursors
+  git:
+    repo: https://github.com/vinceliuice/WhiteSur-cursors.git
+    dest: "{{ theme_temp_dir.path }}/WhiteSur-cursors"
+    depth: 1
+    version: master
+
+- name: Install WhiteSur cursors
+  shell: |
+    cd {{ theme_temp_dir.path }}/WhiteSur-cursors
+    ./install.sh
+  args:
+    executable: /bin/bash
+
+- name: Install GNOME Shell extensions dependencies
+  dnf:
+    name:
+      - libgda
+      - libgda-sqlite
+    state: present
+  ignore_errors: yes
+
+- name: Install User Themes extension
+  shell: |
+    gnome-extensions install user-theme@gnome-shell-extensions.gcampax.github.com || true
+  become_user: "{{ item.name }}"
+  loop: "{{ ubuntu_system.users | default([]) }}"
+  when:
+    - ubuntu_system is defined
+    - item.uid >= 1000
+  ignore_errors: yes
+
+- name: Enable User Themes extension
+  shell: |
+    gnome-extensions enable user-theme@gnome-shell-extensions.gcampax.github.com || true
+  become_user: "{{ item.name }}"
+  loop: "{{ ubuntu_system.users | default([]) }}"
+  when:
+    - ubuntu_system is defined
+    - item.uid >= 1000
+  ignore_errors: yes
+
+- name: Apply WhiteSur theme for users
+  shell: |
+    gsettings set org.gnome.desktop.interface gtk-theme "WhiteSur-{{ whitesur.theme_variant | default('Dark') | capitalize }}"
+    gsettings set org.gnome.desktop.wm.preferences theme "WhiteSur-{{ whitesur.theme_variant | default('Dark') | capitalize }}"
+    gsettings set org.gnome.shell.extensions.user-theme name "WhiteSur-{{ whitesur.theme_variant | default('Dark') | capitalize }}"
+  become_user: "{{ item.name }}"
+  loop: "{{ ubuntu_system.users | default([]) }}"
+  when:
+    - ubuntu_system is defined
+    - item.uid >= 1000
+  environment:
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ item.uid }}/bus"
+  ignore_errors: yes
+
+- name: Apply WhiteSur icon theme for users
+  shell: |
+    gsettings set org.gnome.desktop.interface icon-theme "WhiteSur{{ '-dark' if whitesur.theme_variant == 'dark' else '' }}"
+  become_user: "{{ item.name }}"
+  loop: "{{ ubuntu_system.users | default([]) }}"
+  when:
+    - whitesur.icon_theme | default(true)
+    - ubuntu_system is defined
+    - item.uid >= 1000
+  environment:
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ item.uid }}/bus"
+  ignore_errors: yes
+
+- name: Apply WhiteSur cursor theme for users
+  shell: |
+    gsettings set org.gnome.desktop.interface cursor-theme "WhiteSur-cursors"
+  become_user: "{{ item.name }}"
+  loop: "{{ ubuntu_system.users | default([]) }}"
+  when:
+    - ubuntu_system is defined
+    - item.uid >= 1000
+  environment:
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ item.uid }}/bus"
+  ignore_errors: yes
+
+- name: Configure GNOME Shell to look like macOS
+  shell: |
+    # Dock settings
+    gsettings set org.gnome.shell.extensions.dash-to-dock dock-position 'BOTTOM'
+    gsettings set org.gnome.shell.extensions.dash-to-dock extend-height false
+    gsettings set org.gnome.shell.extensions.dash-to-dock transparency-mode 'FIXED'
+    gsettings set org.gnome.shell.extensions.dash-to-dock background-opacity 0.3
+    gsettings set org.gnome.shell.extensions.dash-to-dock dash-max-icon-size 48
+    
+    # Top bar settings
+    gsettings set org.gnome.desktop.interface clock-show-date true
+    gsettings set org.gnome.desktop.interface show-battery-percentage true
+    
+    # Window buttons (like macOS)
+    gsettings set org.gnome.desktop.wm.preferences button-layout 'close,minimize,maximize:'
+    
+    # Font settings
+    gsettings set org.gnome.desktop.interface font-name 'SF Pro Text 11'
+    gsettings set org.gnome.desktop.interface document-font-name 'SF Pro Text 11'
+    gsettings set org.gnome.desktop.interface monospace-font-name 'SF Mono 10'
+    gsettings set org.gnome.desktop.wm.preferences titlebar-font 'SF Pro Display Bold 11'
+  become_user: "{{ item.name }}"
+  loop: "{{ ubuntu_system.users | default([]) }}"
+  when:
+    - configure_gnome | default(true)
+    - ubuntu_system is defined
+    - item.uid >= 1000
+  environment:
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ item.uid }}/bus"
+  ignore_errors: yes
+
+- name: Install additional GNOME extensions
+  shell: |
+    busctl --user call org.gnome.Shell.Extensions \
+      /org/gnome/Shell/Extensions \
+      org.gnome.Shell.Extensions \
+      InstallRemoteExtension s {{ item.id }}
+  become_user: "{{ user_item.name }}"
+  loop: "{{ gnome_extensions | default([]) }}"
+  loop_control:
+    loop_var: item
+  vars:
+    user_item: "{{ ubuntu_system.users | default([]) | selectattr('uid', 'ge', 1000) | first }}"
+  when:
+    - ubuntu_system is defined
+    - ubuntu_system.users | default([]) | selectattr('uid', 'ge', 1000) | list | length > 0
+  environment:
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ user_item.uid }}/bus"
+  ignore_errors: yes
+
+- name: Install Firefox WhiteSur theme
+  shell: |
+    cd {{ theme_temp_dir.path }}/WhiteSur-gtk-theme
+    ./tweaks.sh --firefox
+  args:
+    executable: /bin/bash
+  become_user: "{{ item.name }}"
+  loop: "{{ ubuntu_system.users | default([]) }}"
+  when:
+    - whitesur.firefox_theme | default(false)
+    - ubuntu_system is defined
+    - item.uid >= 1000
+  ignore_errors: yes
+
+- name: Cleanup temporary directory
+  file:
+    path: "{{ theme_temp_dir.path }}"
+    state: absent
+
+- name: Display WhiteSur installation summary
+  debug:
+    msg: |
+      ╔════════════════════════════════════════════════════════════╗
+      ║         WhiteSur Theme Installation Summary               ║
+      ╚════════════════════════════════════════════════════════════╝
+      
+      ✓ GTK Theme: WhiteSur-{{ whitesur.theme_variant | default('Dark') | capitalize }}
+      ✓ Icon Theme: {{ 'Installed' if whitesur.icon_theme | default(true) else 'Skipped' }}
+      ✓ Cursor Theme: Installed
+      ✓ GNOME Extensions: Configured
+      ✓ macOS-like Settings: {{ 'Applied' if configure_gnome | default(true) else 'Skipped' }}
+      
+      ⚠️  NOTE: Log out and log back in to see the full theme changes.
+      You can further customize the theme using GNOME Tweaks.

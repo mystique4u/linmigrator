@@ -1,0 +1,88 @@
+---
+# Pre-flight checks before migration
+
+- name: Check if system is Fedora
+  assert:
+    that:
+      - ansible_distribution == "Fedora"
+    fail_msg: "Target system must be Fedora"
+    success_msg: "✓ Target system is Fedora {{ ansible_distribution_version }}"
+
+- name: Check if running as root or with sudo
+  assert:
+    that:
+      - ansible_user_id == "root" or ansible_become
+    fail_msg: "Must run with root privileges"
+    success_msg: "✓ Running with appropriate privileges"
+
+- name: Check internet connectivity
+  uri:
+    url: https://www.google.com
+    timeout: 5
+  register: internet_check
+  failed_when: false
+  
+- name: Warn if no internet connectivity
+  debug:
+    msg: "⚠️  WARNING: No internet connectivity detected. Package installation may fail."
+  when: internet_check is failed
+
+- name: Check available disk space on root
+  shell: df / | tail -1 | awk '{print $4}'
+  register: root_space
+  changed_when: false
+
+- name: Verify sufficient disk space (at least 10GB)
+  assert:
+    that:
+      - root_space.stdout | int > 10000000
+    fail_msg: "Insufficient disk space on root filesystem (need at least 10GB)"
+    success_msg: "✓ Sufficient disk space available"
+
+- name: Check if disks are already mounted
+  shell: mount | grep -E '(/var|/home)' || true
+  register: existing_mounts
+  changed_when: false
+
+- name: Display existing mounts
+  debug:
+    msg: "Existing mounts: {{ existing_mounts.stdout_lines }}"
+  when: existing_mounts.stdout != ""
+
+- name: Check if var_disk_device exists
+  stat:
+    path: "{{ var_disk_device }}"
+  register: var_disk_check
+  when: var_disk_device is defined
+
+- name: Check if home_disk_device exists
+  stat:
+    path: "{{ home_disk_device }}"
+  register: home_disk_check
+  when: home_disk_device is defined
+
+- name: Warn if disks not found
+  debug:
+    msg: |
+      ⚠️  WARNING: Configured disks not found!
+      - var_disk: {{ var_disk_device }} - {{ 'Found' if var_disk_check.stat.exists else 'NOT FOUND' }}
+      - home_disk: {{ home_disk_device }} - {{ 'Found' if home_disk_check.stat.exists else 'NOT FOUND' }}
+      
+      Please verify disk attachment in Proxmox and update group_vars/fedora_target.yml
+  when: >
+    (var_disk_device is defined and not var_disk_check.stat.exists) or
+    (home_disk_device is defined and not home_disk_check.stat.exists)
+
+- name: Display pre-flight check summary
+  debug:
+    msg: |
+      ╔═══════════════════════════════════════════════════════════╗
+      ║              Pre-flight Check Summary                     ║
+      ╚═══════════════════════════════════════════════════════════╝
+      ✓ System: Fedora {{ ansible_distribution_version }}
+      ✓ Architecture: {{ ansible_architecture }}
+      ✓ Privileges: OK
+      ✓ Disk Space: OK
+      {{ '✓' if internet_check is succeeded else '⚠️ ' }} Internet: {{ 'Connected' if internet_check is succeeded else 'Issues detected' }}
+      {{ '✓' if var_disk_check.stat.exists else '⚠️ ' }} /var disk: {{ var_disk_device }}
+      {{ '✓' if home_disk_check.stat.exists else '⚠️ ' }} /home disk: {{ home_disk_device }}

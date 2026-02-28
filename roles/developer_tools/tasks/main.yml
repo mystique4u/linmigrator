@@ -1,0 +1,229 @@
+---
+# Developer tools installation role
+
+- name: Developer tools banner
+  debug:
+    msg: |
+      ╔════════════════════════════════════════════════════════════╗
+      ║           Installing Developer Tools                      ║
+      ╚════════════════════════════════════════════════════════════╝
+
+- name: Install development group
+  dnf:
+    name: '@development-tools'
+    state: present
+
+- name: Install build essentials
+  dnf:
+    name:
+      - gcc
+      - gcc-c++
+      - make
+      - cmake
+      - autoconf
+      - automake
+      - libtool
+      - pkg-config
+      - kernel-devel
+      - kernel-headers
+    state: present
+  when: developer_tools.install_build_tools | default(true)
+
+- name: Install Git and related tools
+  dnf:
+    name:
+      - git
+      - git-lfs
+      - tig
+      - gh
+    state: present
+  when: developer_tools.install_git | default(true)
+  ignore_errors: yes
+
+- name: Configure Git LFS
+  shell: git lfs install
+  become: no
+  when: developer_tools.install_git | default(true)
+  ignore_errors: yes
+
+- name: Install Python development tools
+  dnf:
+    name:
+      - python3
+      - python3-pip
+      - python3-devel
+      - python3-virtualenv
+      - python3-setuptools
+      - python3-wheel
+      - ipython
+      - python3-pytest
+    state: present
+  when: developer_tools.install_python_tools | default(true)
+
+- name: Install Python packages via pip
+  pip:
+    name:
+      - pipenv
+      - poetry
+      - black
+      - flake8
+      - pylint
+      - mypy
+      - pytest
+      - ipython
+      - jupyter
+    state: present
+    executable: pip3
+  when: developer_tools.install_python_tools | default(true)
+  ignore_errors: yes
+
+- name: Install Node.js and npm
+  dnf:
+    name:
+      - nodejs
+      - npm
+      - yarn
+    state: present
+  when: developer_tools.install_nodejs | default(true)
+
+- name: Install global npm packages
+  npm:
+    name: "{{ item }}"
+    global: yes
+    state: present
+  loop:
+    - typescript
+    - ts-node
+    - eslint
+    - prettier
+    - nodemon
+  when: developer_tools.install_nodejs | default(true)
+  ignore_errors: yes
+
+- name: Install Docker
+  dnf:
+    name:
+      - docker
+      - docker-compose
+    state: present
+  when: developer_tools.install_docker | default(true)
+
+- name: Start and enable Docker service
+  systemd:
+    name: docker
+    state: started
+    enabled: yes
+  when: developer_tools.install_docker | default(true)
+
+- name: Add users to docker group
+  user:
+    name: "{{ item.name }}"
+    groups: docker
+    append: yes
+  loop: "{{ ubuntu_system.users | default([]) }}"
+  when:
+    - developer_tools.install_docker | default(true)
+    - item.uid >= 1000
+    - ubuntu_system is defined
+  ignore_errors: yes
+
+- name: Install Podman
+  dnf:
+    name:
+      - podman
+      - podman-compose
+      - buildah
+      - skopeo
+    state: present
+  when: developer_tools.install_podman | default(true)
+
+- name: Add VSCode repository
+  yum_repository:
+    name: code
+    description: Visual Studio Code
+    baseurl: https://packages.microsoft.com/yumrepos/vscode
+    gpgkey: https://packages.microsoft.com/keys/microsoft.asc
+    gpgcheck: yes
+    enabled: yes
+  when: developer_tools.install_vscode | default(true)
+
+- name: Install VSCode
+  dnf:
+    name: code
+    state: present
+  when: developer_tools.install_vscode | default(true)
+
+- name: Install database clients
+  dnf:
+    name:
+      - postgresql
+      - mysql
+      - redis
+      - sqlite
+    state: present
+  ignore_errors: yes
+
+- name: Install additional development tools
+  dnf:
+    name:
+      - vim-enhanced
+      - neovim
+      - tmux
+      - screen
+      - htop
+      - btop
+      - ncdu
+      - jq
+      - yq
+      - ripgrep
+      - fd-find
+      - fzf
+      - tree
+      - strace
+      - ltrace
+      - gdb
+      - valgrind
+      - ctags
+      - cscope
+      - shellcheck
+      - httpie
+      - meld
+      - diffuse
+    state: present
+  ignore_errors: yes
+
+- name: Install Rust toolchain
+  shell: |
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+  args:
+    creates: ~/.cargo/bin/rustc
+  become: no
+  ignore_errors: yes
+
+- name: Install Go language
+  dnf:
+    name: golang
+    state: present
+  ignore_errors: yes
+
+- name: Install Java Development Kit
+  dnf:
+    name:
+      - java-latest-openjdk
+      - java-latest-openjdk-devel
+      - maven
+      - gradle
+    state: present
+  ignore_errors: yes
+
+- name: Display developer tools summary
+  debug:
+    msg: |
+      ✓ Developer Tools Installed:
+      - Build Tools: {{ 'Yes' if developer_tools.install_build_tools | default(true) else 'No' }}
+      - Git: {{ 'Yes' if developer_tools.install_git | default(true) else 'No' }}
+      - Python: {{ 'Yes' if developer_tools.install_python_tools | default(true) else 'No' }}
+      - Node.js: {{ 'Yes' if developer_tools.install_nodejs | default(true) else 'No' }}
+      - Docker: {{ 'Yes' if developer_tools.install_docker | default(true) else 'No' }}
+      - Podman: {{ 'Yes' if developer_tools.install_podman | default(true) else 'No' }}
+      - VSCode: {{ 'Yes' if developer_tools.install_vscode | default(true) else 'No' }}

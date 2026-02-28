@@ -1,0 +1,235 @@
+---
+# NVIDIA drivers and CUDA installation role for Fedora
+
+- name: NVIDIA/CUDA banner
+  debug:
+    msg: |
+      ╔════════════════════════════════════════════════════════════╗
+      ║        Installing NVIDIA Drivers & CUDA Toolkit           ║
+      ╚════════════════════════════════════════════════════════════╝
+
+- name: Check if NVIDIA GPU is present
+  shell: lspci | grep -i nvidia
+  register: nvidia_gpu_check
+  failed_when: false
+  changed_when: false
+
+- name: Display NVIDIA GPU information
+  debug:
+    msg: "{{ nvidia_gpu_check.stdout_lines }}"
+  when: nvidia_gpu_check.stdout != ""
+
+- name: Skip NVIDIA installation if no GPU found
+  debug:
+    msg: "⚠️  No NVIDIA GPU detected. Skipping NVIDIA driver installation."
+  when: nvidia_gpu_check.stdout == ""
+
+- name: Check if Secure Boot is enabled
+  shell: mokutil --sb-state 2>/dev/null || echo "unknown"
+  register: secure_boot_status
+  changed_when: false
+  when: nvidia_gpu_check.stdout != ""
+
+- name: Warn about Secure Boot
+  debug:
+    msg: |
+      ⚠️  WARNING: Secure Boot may be enabled.
+      NVIDIA drivers may require disabling Secure Boot or signing the kernel modules.
+      Current status: {{ secure_boot_status.stdout }}
+  when:
+    - nvidia_gpu_check.stdout != ""
+    - "'enabled' in secure_boot_status.stdout"
+
+- name: Ensure RPM Fusion is enabled
+  dnf:
+    name:
+      - "https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-{{ ansible_distribution_version }}.noarch.rpm"
+      - "https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-{{ ansible_distribution_version }}.noarch.rpm"
+    state: present
+    disable_gpg_check: yes
+  when:
+    - nvidia_gpu_check.stdout != ""
+    - nvidia.install_drivers | default(true)
+
+- name: Update package cache
+  dnf:
+    update_cache: yes
+  when: nvidia_gpu_check.stdout != ""
+
+- name: Install NVIDIA driver detection tool
+  dnf:
+    name: akmod-nvidia
+    state: present
+  when:
+    - nvidia_gpu_check.stdout != ""
+    - nvidia.install_drivers | default(true)
+
+- name: Install NVIDIA drivers
+  dnf:
+    name:
+      - akmod-nvidia
+      - xorg-x11-drv-nvidia
+      - xorg-x11-drv-nvidia-libs
+      - xorg-x11-drv-nvidia-cuda
+      - nvidia-settings
+      - nvidia-xconfig
+    state: present
+  when:
+    - nvidia_gpu_check.stdout != ""
+    - nvidia.install_drivers | default(true)
+
+- name: Install 32-bit NVIDIA libraries (for gaming/Steam)
+  dnf:
+    name:
+      - xorg-x11-drv-nvidia-libs.i686
+    state: present
+  when:
+    - nvidia_gpu_check.stdout != ""
+    - nvidia.install_drivers | default(true)
+  ignore_errors: yes
+
+- name: Wait for NVIDIA kernel module to build
+  shell: |
+    timeout 300 bash -c 'while ! modinfo nvidia &>/dev/null; do sleep 5; done'
+  when:
+    - nvidia_gpu_check.stdout != ""
+    - nvidia.install_drivers | default(true)
+  ignore_errors: yes
+
+- name: Load NVIDIA kernel module
+  modprobe:
+    name: nvidia
+    state: present
+  when:
+    - nvidia_gpu_check.stdout != ""
+    - nvidia.install_drivers | default(true)
+  ignore_errors: yes
+
+- name: Add CUDA repository
+  yum_repository:
+    name: cuda-fedora
+    description: CUDA Repository for Fedora
+    baseurl: "https://developer.download.nvidia.com/compute/cuda/repos/fedora{{ ansible_distribution_version }}/x86_64"
+    gpgkey: https://developer.download.nvidia.com/compute/cuda/repos/fedora{{ ansible_distribution_version }}/x86_64/D42D0685.pub
+    gpgcheck: yes
+    enabled: yes
+  when:
+    - nvidia_gpu_check.stdout != ""
+    - nvidia.install_cuda | default(true)
+  ignore_errors: yes
+
+- name: Install CUDA toolkit
+  dnf:
+    name:
+      - cuda
+      - cuda-toolkit
+    state: present
+  when:
+    - nvidia_gpu_check.stdout != ""
+    - nvidia.install_cuda | default(true)
+  ignore_errors: yes
+
+- name: Install CUDA development tools
+  dnf:
+    name:
+      - cuda-cudart-devel
+      - cuda-compiler
+      - cuda-libraries-devel
+      - cuda-driver-devel
+      - libcudnn8
+      - libcudnn8-devel
+    state: present
+  when:
+    - nvidia_gpu_check.stdout != ""
+    - nvidia.install_cuda | default(true)
+  ignore_errors: yes
+
+- name: Add CUDA to PATH
+  lineinfile:
+    path: /etc/profile.d/cuda.sh
+    line: "{{ item }}"
+    create: yes
+    mode: '0644'
+  loop:
+    - 'export PATH=/usr/local/cuda/bin:$PATH'
+    - 'export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH'
+  when:
+    - nvidia_gpu_check.stdout != ""
+    - nvidia.install_cuda | default(true)
+
+- name: Configure nvidia-persistenced service
+  systemd:
+    name: nvidia-persistenced
+    enabled: yes
+    state: started
+  when:
+    - nvidia_gpu_check.stdout != ""
+    - nvidia.enable_persistence_mode | default(true)
+  ignore_errors: yes
+
+- name: Configure nvidia-powerd service
+  systemd:
+    name: nvidia-powerd
+    enabled: yes
+    state: started
+  when:
+    - nvidia_gpu_check.stdout != ""
+    - nvidia.enable_persistence_mode | default(true)
+  ignore_errors: yes
+
+- name: Update initramfs
+  shell: dracut --force
+  when:
+    - nvidia_gpu_check.stdout != ""
+    - nvidia.install_drivers | default(true)
+  ignore_errors: yes
+
+- name: Blacklist nouveau driver
+  kernel_blacklist:
+    name: nouveau
+    state: present
+  when:
+    - nvidia_gpu_check.stdout != ""
+    - nvidia.install_drivers | default(true)
+
+- name: Create blacklist file for nouveau
+  copy:
+    content: |
+      blacklist nouveau
+      options nouveau modeset=0
+    dest: /etc/modprobe.d/blacklist-nouveau.conf
+    mode: '0644'
+  when:
+    - nvidia_gpu_check.stdout != ""
+    - nvidia.install_drivers | default(true)
+
+- name: Check NVIDIA driver version
+  shell: nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null || echo "Not loaded"
+  register: nvidia_version
+  changed_when: false
+  when: nvidia_gpu_check.stdout != ""
+
+- name: Check CUDA version
+  shell: nvcc --version 2>/dev/null | grep "release" | awk '{print $5}' | sed 's/,//' || echo "Not installed"
+  register: cuda_version_check
+  changed_when: false
+  when: nvidia_gpu_check.stdout != ""
+
+- name: Display NVIDIA/CUDA installation summary
+  debug:
+    msg: |
+      ╔════════════════════════════════════════════════════════════╗
+      ║         NVIDIA/CUDA Installation Summary                  ║
+      ╚════════════════════════════════════════════════════════════╝
+      
+      GPU Detected: {{ 'Yes' if nvidia_gpu_check.stdout != "" else 'No' }}
+      {% if nvidia_gpu_check.stdout != "" %}
+      Driver Installed: {{ 'Yes' if nvidia.install_drivers | default(true) else 'No' }}
+      Driver Version: {{ nvidia_version.stdout | default('Unknown') }}
+      CUDA Installed: {{ 'Yes' if nvidia.install_cuda | default(true) else 'No' }}
+      CUDA Version: {{ cuda_version_check.stdout | default('Unknown') }}
+      Secure Boot: {{ secure_boot_status.stdout | default('Unknown') }}
+      
+      ⚠️  NOTE: A reboot is required for NVIDIA drivers to fully load.
+      After reboot, verify with: nvidia-smi
+      {% endif %}

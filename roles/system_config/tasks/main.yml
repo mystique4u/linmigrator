@@ -1,0 +1,222 @@
+---
+# System configuration role
+
+- name: System configuration banner
+  debug:
+    msg: |
+      ╔════════════════════════════════════════════════════════════╗
+      ║           Configuring System Settings                     ║
+      ╚════════════════════════════════════════════════════════════╝
+
+- name: Configure hostname (preserve from /home if available)
+  shell: |
+    if [ -f /home/{{ ubuntu_system.users[0].name }}/.hostname_backup ]; then
+      hostnamectl set-hostname $(cat /home/{{ ubuntu_system.users[0].name }}/.hostname_backup)
+    fi
+  when:
+    - ubuntu_system is defined
+    - ubuntu_system.users | length > 0
+  ignore_errors: yes
+
+- name: Enable and start firewalld
+  systemd:
+    name: firewalld
+    state: started
+    enabled: yes
+  when: enable_firewall | default(true)
+
+- name: Configure firewall rules
+  firewalld:
+    service: "{{ item }}"
+    permanent: yes
+    state: enabled
+  loop:
+    - ssh
+    - http
+    - https
+  when: enable_firewall | default(true)
+  notify: reload firewalld
+
+- name: Reload firewalld
+  systemd:
+    name: firewalld
+    state: reloaded
+  when: enable_firewall | default(true)
+
+- name: Configure SELinux mode
+  selinux:
+    policy: targeted
+    state: "{{ selinux_mode | default('enforcing') }}"
+  when: configure_selinux | default(true)
+
+- name: Enable services
+  systemd:
+    name: "{{ item }}"
+    enabled: yes
+    state: started
+  loop: "{{ services_to_enable }}"
+  ignore_errors: yes
+
+- name: Disable services
+  systemd:
+    name: "{{ item }}"
+    enabled: no
+    state: stopped
+  loop: "{{ services_to_disable }}"
+  ignore_errors: yes
+  when: services_to_disable is defined
+
+- name: Migrate systemd services from Ubuntu
+  systemd:
+    name: "{{ item.name }}"
+    enabled: yes
+  loop: "{{ ubuntu_system.services | default([]) }}"
+  when:
+    - ubuntu_system is defined
+    - item.enabled | default(false)
+  ignore_errors: yes
+
+- name: Configure sudo for migrated users
+  lineinfile:
+    path: /etc/sudoers.d/{{ item.name }}
+    line: "{{ item.name }} ALL=(ALL) NOPASSWD:ALL"
+    create: yes
+    mode: '0440'
+    validate: '/usr/sbin/visudo -cf %s'
+  loop: "{{ ubuntu_system.users | default([]) }}"
+  when:
+    - ubuntu_system is defined
+    - item.uid >= 1000
+    - "'sudo' in (ubuntu_system.groups | default([]) | selectattr('name', 'equalto', 'sudo') | map(attribute='members') | flatten)"
+  ignore_errors: yes
+
+- name: Configure SSH settings
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+    state: present
+  loop:
+    - { regexp: '^#?PermitRootLogin', line: 'PermitRootLogin no' }
+    - { regexp: '^#?PasswordAuthentication', line: 'PasswordAuthentication yes' }
+    - { regexp: '^#?PubkeyAuthentication', line: 'PubkeyAuthentication yes' }
+  notify: restart sshd
+
+- name: Restart SSH service
+  systemd:
+    name: sshd
+    state: restarted
+
+- name: Configure automatic updates
+  dnf:
+    name: dnf-automatic
+    state: present
+
+- name: Enable automatic updates
+  systemd:
+    name: dnf-automatic.timer
+    enabled: yes
+    state: started
+
+- name: Configure dnf-automatic to download and apply updates
+  lineinfile:
+    path: /etc/dnf/automatic.conf
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+    state: present
+  loop:
+    - { regexp: '^download_updates', line: 'download_updates = yes' }
+    - { regexp: '^apply_updates', line: 'apply_updates = no' }
+
+- name: Set system locale
+  shell: localectl set-locale LANG=en_US.UTF-8
+  ignore_errors: yes
+
+- name: Set system timezone (preserve from Ubuntu if possible)
+  shell: |
+    if [ -f /home/{{ ubuntu_system.users[0].name }}/.timezone_backup ]; then
+      timedatectl set-timezone $(cat /home/{{ ubuntu_system.users[0].name }}/.timezone_backup)
+    else
+      timedatectl set-timezone UTC
+    fi
+  when:
+    - ubuntu_system is defined
+    - ubuntu_system.users | length > 0
+  ignore_errors: yes
+
+- name: Enable NTP time synchronization
+  systemd:
+    name: chronyd
+    enabled: yes
+    state: started
+
+- name: Configure journal settings
+  lineinfile:
+    path: /etc/systemd/journald.conf
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+    state: present
+  loop:
+    - { regexp: '^#?SystemMaxUse=', line: 'SystemMaxUse=500M' }
+    - { regexp: '^#?MaxRetentionSec=', line: 'MaxRetentionSec=1month' }
+  notify: restart journald
+
+- name: Restart journald
+  systemd:
+    name: systemd-journald
+    state: restarted
+
+- name: Configure systemd-resolved
+  systemd:
+    name: systemd-resolved
+    enabled: yes
+    state: started
+
+- name: Configure GRUB settings
+  lineinfile:
+    path: /etc/default/grub
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+    state: present
+  loop:
+    - { regexp: '^GRUB_TIMEOUT=', line: 'GRUB_TIMEOUT=3' }
+    - { regexp: '^GRUB_CMDLINE_LINUX_DEFAULT=', line: 'GRUB_CMDLINE_LINUX_DEFAULT="quiet splash"' }
+  notify: update grub
+
+- name: Update GRUB configuration
+  shell: grub2-mkconfig -o /boot/grub2/grub.cfg
+  ignore_errors: yes
+
+- name: Set services count for summary
+  set_fact:
+    services_configured: "{{ (services_to_enable | length) + (ubuntu_system.services | default([]) | length) }}"
+
+- name: Display system configuration summary
+  debug:
+    msg: |
+      ✓ System Configuration Complete:
+      - Firewall: {{ 'Enabled' if enable_firewall | default(true) else 'Disabled' }}
+      - SELinux: {{ selinux_mode | default('enforcing') }}
+      - Services enabled: {{ services_to_enable | length }}
+      - Services migrated: {{ ubuntu_system.services | default([]) | length }}
+      - SSH: Configured
+      - Automatic updates: Configured
+
+handlers:
+  - name: reload firewalld
+    systemd:
+      name: firewalld
+      state: reloaded
+
+  - name: restart sshd
+    systemd:
+      name: sshd
+      state: restarted
+
+  - name: restart journald
+    systemd:
+      name: systemd-journald
+      state: restarted
+
+  - name: update grub
+    shell: grub2-mkconfig -o /boot/grub2/grub.cfg

@@ -1,0 +1,142 @@
+---
+# Role to mount /var and /home disks from Ubuntu
+# This role handles disk validation, backup, and mounting
+
+- name: Mount disks banner
+  debug:
+    msg: |
+      ╔════════════════════════════════════════════════════════════╗
+      ║            Mounting Ubuntu Disks                          ║
+      ╚════════════════════════════════════════════════════════════╝
+
+- name: Validate disk devices exist
+  stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ var_disk_device }}"
+    - "{{ home_disk_device }}"
+  register: disk_stat
+
+- name: Fail if disks not found
+  fail:
+    msg: "Disk {{ item.item }} not found! Please attach disks in Proxmox first."
+  when: not item.stat.exists
+  loop: "{{ disk_stat.results }}"
+
+- name: Check filesystem types
+  shell: "blkid -o value -s TYPE {{ item }}"
+  loop:
+    - "{{ var_disk_device }}"
+    - "{{ home_disk_device }}"
+  register: fs_types
+  changed_when: false
+
+- name: Display filesystem information
+  debug:
+    msg: |
+      Disk Information:
+      - {{ var_disk_device }}: {{ fs_types.results[0].stdout }}
+      - {{ home_disk_device }}: {{ fs_types.results[1].stdout }}
+
+- name: Create backup directory if needed
+  file:
+    path: "{{ backup_dir }}"
+    state: directory
+    mode: '0700'
+  when: backup_existing_dirs | bool
+
+- name: Check if /var has existing content
+  find:
+    paths: /var
+    file_type: any
+  register: var_contents
+  
+- name: Backup existing /var if it has content
+  synchronize:
+    src: /var/
+    dest: "{{ backup_dir }}/var_backup_{{ ansible_date_time.iso8601_basic_short }}/"
+    archive: yes
+    recursive: yes
+  delegate_to: "{{ inventory_hostname }}"
+  when:
+    - backup_existing_dirs | bool
+    - var_contents.matched > 0
+
+- name: Check if /home has existing content
+  find:
+    paths: /home
+    file_type: any
+  register: home_contents
+
+- name: Backup existing /home if it has content
+  synchronize:
+    src: /home/
+    dest: "{{ backup_dir }}/home_backup_{{ ansible_date_time.iso8601_basic_short }}/"
+    archive: yes
+    recursive: yes
+  delegate_to: "{{ inventory_hostname }}"
+  when:
+    - backup_existing_dirs | bool
+    - home_contents.matched > 0
+
+- name: Unmount existing /var if mounted
+  mount:
+    path: /var
+    state: unmounted
+  ignore_errors: yes
+
+- name: Unmount existing /home if mounted
+  mount:
+    path: /home
+    state: unmounted
+  ignore_errors: yes
+
+- name: Mount /var disk
+  mount:
+    path: /var
+    src: "{{ var_disk_device }}"
+    fstype: "{{ var_disk_fstype }}"
+    opts: "{{ var_mount_opts }}"
+    state: mounted
+
+- name: Mount /home disk
+  mount:
+    path: /home
+    src: "{{ home_disk_device }}"
+    fstype: "{{ home_disk_fstype }}"
+    opts: "{{ home_mount_opts }}"
+    state: mounted
+
+- name: Verify mounts
+  shell: mountpoint -q {{ item }}
+  loop:
+    - /var
+    - /home
+  changed_when: false
+
+- name: Add mounts to /etc/fstab for persistence
+  mount:
+    path: "{{ item.path }}"
+    src: "{{ item.src }}"
+    fstype: "{{ item.fstype }}"
+    opts: "{{ item.opts }}"
+    state: present
+  loop:
+    - { path: '/var', src: "{{ var_disk_device }}", fstype: "{{ var_disk_fstype }}", opts: "{{ var_mount_opts }}" }
+    - { path: '/home', src: "{{ home_disk_device }}", fstype: "{{ home_disk_fstype }}", opts: "{{ home_mount_opts }}" }
+
+- name: Restore SELinux contexts
+  shell: restorecon -R {{ item }}
+  loop:
+    - /var
+    - /home
+  when: ansible_selinux.status == "enabled"
+
+- name: Display mount status
+  debug:
+    msg: |
+      ✓ Disks mounted successfully!
+      - /var: {{ var_disk_device }}
+      - /home: {{ home_disk_device }}
+      
+      Backups (if created): {{ backup_dir }}

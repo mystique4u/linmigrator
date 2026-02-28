@@ -1,0 +1,13 @@
+{
+  "packages": {
+    "apt": [],
+    "snap": [],
+    "flatpak": []
+  },
+  "services": [],
+  "users": [],
+  "groups": [],
+  "configs": {},
+  "statistics": {},
+  "_note": "This is a placeholder. Run gather_inventory.py to generate actual inventory."
+}

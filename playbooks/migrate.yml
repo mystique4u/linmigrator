@@ -1,0 +1,110 @@
+---
+# Main migration playbook for Ubuntu to Fedora migration
+# This playbook orchestrates all migration tasks
+
+- name: Ubuntu to Fedora Migration
+  hosts: fedora_target
+  become: yes
+  gather_facts: yes
+  
+  vars:
+    migration_timestamp: "{{ ansible_date_time.iso8601_basic_short }}"
+    ubuntu_inventory_file: "{{ playbook_dir }}/../inventory/ubuntu_system.json"
+  
+  pre_tasks:
+    - name: Display migration banner
+      debug:
+        msg: |
+          ╔════════════════════════════════════════════════════════════╗
+          ║                                                            ║
+          ║         Ubuntu → Fedora Migration Playbook                ║
+          ║                                                            ║
+          ║  This will migrate your Ubuntu system to Fedora           ║
+          ║  preserving /var and /home on separate disks              ║
+          ║                                                            ║
+          ╚════════════════════════════════════════════════════════════╝
+          
+          Target: {{ ansible_hostname }}
+          Timestamp: {{ migration_timestamp }}
+    
+    - name: Create migration log directory
+      file:
+        path: "{{ migration_log_dir }}"
+        state: directory
+        mode: '0755'
+    
+    - name: Check if Ubuntu inventory exists
+      stat:
+        path: "{{ ubuntu_inventory_file }}"
+      register: ubuntu_inventory
+      delegate_to: localhost
+      become: no
+    
+    - name: Load Ubuntu system inventory
+      include_vars:
+        file: "{{ ubuntu_inventory_file }}"
+        name: ubuntu_system
+      when: ubuntu_inventory.stat.exists
+      delegate_to: localhost
+      become: no
+    
+    - name: Pre-flight system check
+      include_tasks: tasks/preflight_check.yml
+  
+  roles:
+    - role: mount_disks
+      tags: ['mount', 'disks']
+      when: var_disk_device is defined and home_disk_device is defined
+    
+    - role: packages
+      tags: ['packages', 'software']
+      when: migrate_packages | bool
+    
+    - role: developer_tools
+      tags: ['developer', 'tools']
+      when: install_developer_tools | bool
+    
+    - role: nvidia_cuda
+      tags: ['nvidia', 'cuda', 'gpu']
+      when: install_nvidia_cuda | bool
+    
+    - role: whitesur_theme
+      tags: ['theme', 'gnome', 'ui']
+      when: install_whitesur_theme | bool
+    
+    - role: system_config
+      tags: ['config', 'system']
+  
+  post_tasks:
+    - name: Run post-migration validation
+      include_tasks: tasks/post_migration_validation.yml
+    
+    - name: Display migration summary
+      debug:
+        msg: |
+          ╔════════════════════════════════════════════════════════════╗
+          ║                                                            ║
+          ║         Migration Complete!                               ║
+          ║                                                            ║
+          ╚════════════════════════════════════════════════════════════╝
+          
+          Summary:
+          - Packages installed: {{ packages_installed | default(0) }}
+          - Services configured: {{ services_configured | default(0) }}
+          - Disks mounted: /var, /home
+          - Theme installed: WhiteSur
+          - NVIDIA/CUDA: Configured
+          
+          Next steps:
+          1. Reboot the system: sudo reboot
+          2. Verify mounts: df -h
+          3. Test NVIDIA: nvidia-smi
+          4. Log in to GNOME and check theme
+          
+          Logs: {{ migration_log_dir }}
+    
+    - name: Create migration completion marker
+      file:
+        path: "{{ migration_log_dir }}/migration_complete_{{ migration_timestamp }}"
+        state: touch
+        mode: '0644'

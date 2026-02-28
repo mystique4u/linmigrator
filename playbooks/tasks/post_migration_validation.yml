@@ -1,0 +1,107 @@
+---
+# Post-migration validation tasks
+
+- name: Check if /var is mounted
+  shell: mountpoint -q /var
+  register: var_mounted
+  failed_when: false
+  changed_when: false
+
+- name: Check if /home is mounted
+  shell: mountpoint -q /home
+  register: home_mounted
+  failed_when: false
+  changed_when: false
+
+- name: Verify critical services are running
+  systemd:
+    name: "{{ item }}"
+    state: started
+  loop: "{{ services_to_enable }}"
+  register: service_check
+  failed_when: false
+
+- name: Check NVIDIA driver if installed
+  shell: nvidia-smi
+  register: nvidia_check
+  failed_when: false
+  changed_when: false
+  when: install_nvidia_cuda | bool
+
+- name: Check CUDA if installed
+  shell: nvcc --version
+  register: cuda_check
+  failed_when: false
+  changed_when: false
+  when: install_nvidia_cuda | bool
+
+- name: Verify disk space after migration
+  shell: df -h / /var /home
+  register: disk_space
+  changed_when: false
+
+- name: Display validation results
+  debug:
+    msg: |
+      ╔═══════════════════════════════════════════════════════════╗
+      ║           Post-Migration Validation Results               ║
+      ╚═══════════════════════════════════════════════════════════╝
+      
+      Disk Mounts:
+      {{ '✓' if var_mounted.rc == 0 else '✗' }} /var: {{ 'Mounted' if var_mounted.rc == 0 else 'NOT MOUNTED' }}
+      {{ '✓' if home_mounted.rc == 0 else '✗' }} /home: {{ 'Mounted' if home_mounted.rc == 0 else 'NOT MOUNTED' }}
+      
+      Services:
+      {% for service in services_to_enable %}
+      {{ '✓' if service_check.results[loop.index0].state == 'started' else '✗' }} {{ service }}: {{ service_check.results[loop.index0].state | default('unknown') }}
+      {% endfor %}
+      
+      {% if install_nvidia_cuda | bool %}
+      NVIDIA/CUDA:
+      {{ '✓' if nvidia_check.rc == 0 else '✗' }} NVIDIA Driver: {{ 'OK' if nvidia_check.rc == 0 else 'Failed' }}
+      {{ '✓' if cuda_check.rc == 0 else '✗' }} CUDA Toolkit: {{ 'OK' if cuda_check.rc == 0 else 'Failed' }}
+      {% endif %}
+      
+      Disk Space:
+      {{ disk_space.stdout }}
+
+- name: Save validation report
+  copy:
+    content: |
+      Migration Validation Report
+      ==========================
+      Date: {{ ansible_date_time.iso8601 }}
+      Host: {{ ansible_hostname }}
+      
+      Disk Mounts:
+      - /var: {{ 'Mounted' if var_mounted.rc == 0 else 'NOT MOUNTED' }}
+      - /home: {{ 'Mounted' if home_mounted.rc == 0 else 'NOT MOUNTED' }}
+      
+      Services:
+      {% for service in services_to_enable %}
+      - {{ service }}: {{ service_check.results[loop.index0].state | default('unknown') }}
+      {% endfor %}
+      
+      {% if install_nvidia_cuda | bool %}
+      NVIDIA/CUDA:
+      - Driver: {{ 'OK' if nvidia_check.rc == 0 else 'Failed' }}
+      - CUDA: {{ 'OK' if cuda_check.rc == 0 else 'Failed' }}
+      {% endif %}
+      
+      Disk Space:
+      {{ disk_space.stdout }}
+    dest: "{{ migration_log_dir }}/validation_report_{{ ansible_date_time.iso8601_basic_short }}.txt"
+    mode: '0644'
+
+- name: Warn about critical issues
+  fail:
+    msg: |
+      ⚠️  CRITICAL: Post-migration validation failed!
+      
+      Issues detected:
+      {% if var_mounted.rc != 0 %}- /var is not mounted{% endif %}
+      {% if home_mounted.rc != 0 %}- /home is not mounted{% endif %}
+      
+      Please check the logs and fix issues before rebooting.
+      See: {{ migration_log_dir }}
+  when: var_mounted.rc != 0 or home_mounted.rc != 0

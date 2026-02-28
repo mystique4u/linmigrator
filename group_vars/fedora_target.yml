@@ -1,0 +1,91 @@
+---
+# Configuration variables for Fedora target system
+
+# Disk configuration
+# IMPORTANT: Update these device paths based on your Proxmox disk attachment
+var_disk_device: "/dev/sdb1"      # Device for /var disk from Ubuntu
+home_disk_device: "/dev/sdc1"     # Device for /home disk from Ubuntu
+
+# Filesystem types (usually ext4 for Ubuntu)
+var_disk_fstype: "ext4"
+home_disk_fstype: "ext4"
+
+# Mount options
+var_mount_opts: "defaults,noatime"
+home_mount_opts: "defaults,noatime"
+
+# Backup existing directories before mounting?
+backup_existing_dirs: true
+backup_dir: "/root/migration_backup"
+
+# Migration settings
+migrate_packages: true
+install_developer_tools: true
+install_nvidia_cuda: true
+install_whitesur_theme: true
+configure_gnome: true
+
+# User configuration
+preserve_user_data: true
+migrate_ssh_keys: true
+
+# System configuration
+enable_firewall: true
+configure_selinux: true
+selinux_mode: "enforcing"  # enforcing, permissive, or disabled
+
+# Package sources
+enable_rpmfusion: true
+enable_flathub: true
+
+# Developer tools configuration
+developer_tools:
+  install_docker: true
+  install_podman: true
+  install_git: true
+  install_vscode: true
+  install_python_tools: true
+  install_nodejs: true
+  install_build_tools: true
+
+# NVIDIA configuration
+nvidia:
+  install_drivers: true
+  install_cuda: true
+  cuda_version: "12.3"  # Will install latest if not specified
+  enable_persistence_mode: true
+
+# WhiteSur theme configuration
+whitesur:
+  theme_variant: "dark"  # dark, light
+  icon_theme: true
+  firefox_theme: false
+  gdm_theme: false  # Careful: can break login if something goes wrong
+  
+# GNOME extensions to install
+gnome_extensions:
+  - id: "user-theme@gnome-shell-extensions.gcampax.github.com"
+    name: "User Themes"
+  - id: "dash-to-dock@micxgx.gmail.com"
+    name: "Dash to Dock"
+  - id: "blur-my-shell@aunetx"
+    name: "Blur my Shell"
+  - id: "appindicatorsupport@rgcjonas.gmail.com"
+    name: "AppIndicator Support"
+
+# Services to enable
+services_to_enable:
+  - sshd
+  - firewalld
+  
+# Services to disable
+services_to_disable: []
+
+# Validation settings
+validate_before_mount: true
+validate_after_mount: true
+dry_run_mount: false  # Set to true to test without actually mounting
+
+# Logging
+migration_log_dir: "/var/log/migration"
+keep_logs: true

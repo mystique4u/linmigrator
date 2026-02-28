@@ -13,9 +13,29 @@ Automated migration from Ubuntu to Fedora using Ansible, with support for preser
 
 ## Quick Start
 
+### Option 1: Local Execution (Single Machine - RECOMMENDED)
+
+**Use this if only one machine is running at a time:**
+
+1. **On Fedora, run the local setup:**
+   ```bash
+   ./scripts/local_setup.sh
+   ```
+
+2. **Follow the [Local Migration Guide](LOCAL_MIGRATION_GUIDE.md)** for detailed steps
+
+3. **Run the migration on Fedora itself:**
+   ```bash
+   sudo ansible-playbook -i inventory/hosts.ini playbooks/migrate.yml
+   ```
+
+### Option 2: Remote Execution (Control Machine)
+
+**Use this if running Ansible from a separate control machine:**
+
 1. **Read the [Migration Guide](MIGRATION_GUIDE.md)** for detailed instructions
 
-2. **Gather inventory from Ubuntu system**:
+2. **Gather inventory from Ubuntu system:**
    ```bash
    sudo python3 scripts/gather_inventory.py \
      --root-mount /mnt/ubuntu-var \
@@ -23,12 +43,12 @@ Automated migration from Ubuntu to Fedora using Ansible, with support for preser
      --output inventory/ubuntu_system.json
    ```
 
-3. **Bootstrap the Fedora target**:
+3. **Bootstrap the Fedora target:**
    ```bash
    ./scripts/bootstrap_target.sh <TARGET_IP> <USERNAME>
    ```
 
-4. **Run the migration**:
+4. **Run the migration:**
    ```bash
    ansible-playbook -i inventory/hosts.ini playbooks/migrate.yml
    ```
@@ -61,10 +81,18 @@ linmigrator/
 
 ## Requirements
 
-- **Control Machine**: Linux/macOS with Ansible 2.9+ and Python 3.6+
-- **Source System**: Ubuntu with separate `/var` and `/home` disks
-- **Target System**: Fresh Fedora installation with network access
-- **Proxmox**: VM management platform
+- **For Local Execution (Recommended):**
+  - Fresh Fedora installation where you'll run the migration
+  - Python 3.6+
+  - Ansible will be installed by the setup script
+  
+- **For Remote Execution:**
+  - Control Machine: Linux/macOS with Ansible 2.9+ and Python 3.6+
+  - Target System: Fresh Fedora installation with network access
+
+- **Both Scenarios:**
+  - Source System: Ubuntu with separate `/var` and `/home` disks
+  - Proxmox: VM management platform
 
 ## Safety Features
 
@@ -104,7 +132,8 @@ MIT License - Use at your own risk. Always backup your data.
 
 ## Documentation
 
-- 📖 **[MIGRATION_GUIDE.md](MIGRATION_GUIDE.md)** - Comprehensive step-by-step migration instructions
+- 🏠 **[LOCAL_MIGRATION_GUIDE.md](LOCAL_MIGRATION_GUIDE.md)** - **For single machine setup (RECOMMENDED)**
+- 📖 **[MIGRATION_GUIDE.md](MIGRATION_GUIDE.md)** - For remote execution from control machine
 - ✅ **[MIGRATION_CHECKLIST.md](MIGRATION_CHECKLIST.md)** - Complete checklist for the migration process
 - 🔧 **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Common issues and solutions
 - 📋 **[PROJECT_SUMMARY.md](PROJECT_SUMMARY.md)** - Detailed project overview and features

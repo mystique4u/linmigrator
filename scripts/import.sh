@@ -213,6 +213,109 @@ EOF
     print_success "Variables generated: $vars_file"
 }
 
+# Smart package name transformation (Ubuntu → Fedora naming)
+transform_package_name() {
+    local pkg="$1"
+    
+    # Common transformations
+    case "$pkg" in
+        # Development libraries: -dev → -devel
+        *-dev)
+            echo "${pkg/-dev/-devel}"
+            ;;
+        # Python packages
+        python3-*)
+            # Try both python3- and python- versions
+            echo "$pkg"
+            echo "${pkg/python3-/python-}"
+            ;;
+        # System tools
+        "build-essential")
+            echo "gcc gcc-c++ make kernel-devel"
+            return
+            ;;
+        "net-tools")
+            echo "net-tools"
+            return
+            ;;
+        "dnsutils")
+            echo "bind-utils"
+            return
+            ;;
+        "htop")
+            echo "btop"
+            return
+            ;;
+        # Web servers
+        "apache2")
+            echo "httpd"
+            return
+            ;;
+        # Containers
+        "docker.io")
+            echo "docker"
+            return
+            ;;
+        # Databases
+        "redis-server")
+            echo "redis"
+            return
+            ;;
+        "postgresql-client")
+            echo "postgresql"
+            return
+            ;;
+        "mysql-client")
+            echo "mysql"
+            return
+            ;;
+        # Browsers
+        "chromium-browser")
+            echo "chromium"
+            return
+            ;;
+        # Default: return as-is
+        *)
+            echo "$pkg"
+            ;;
+    esac
+}
+
+# Search for package in Fedora repos using dnf search
+find_fedora_package() {
+    local ubuntu_pkg="$1"
+    
+    # Strip version info and architecture
+    local clean_name=$(echo "$ubuntu_pkg" | sed 's/:.*//' | cut -d'=' -f1 | cut -d':' -f1)
+    
+    # Get transformed names
+    local candidates=$(transform_package_name "$clean_name")
+    
+    # Try each candidate
+    for candidate in $candidates; do
+        # First, try exact match with dnf info (fastest)
+        if dnf info "$candidate" &>/dev/null 2>&1; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    
+    # If no exact match, try dnf search (slower but more thorough)
+    local search_result=$(dnf search --quiet "$clean_name" 2>/dev/null | \
+                         grep -E "^[a-zA-Z0-9_+-]+\." | \
+                         head -1 | \
+                         awk '{print $1}' | \
+                         sed 's/\..*//')
+    
+    if [ -n "$search_result" ]; then
+        echo "$search_result"
+        return 0
+    fi
+    
+    # Not found
+    return 1
+}
+
 # Map Ubuntu packages to Fedora
 map_packages() {
     local export_dir="$1"
@@ -221,103 +324,63 @@ map_packages() {
     local failed_packages="$export_dir/packages_failed.txt"
     
     print_info "Mapping Ubuntu packages to Fedora equivalents..."
+    print_info "This will use dnf search to find the best matches..."
+    echo ""
     
     > "$fedora_packages"
     > "$failed_packages"
     
-    # Package mapping dictionary
-    declare -A PKG_MAP=(
-        # Build tools
-        ["build-essential"]="gcc gcc-c++ make"
-        ["cmake"]="cmake"
-        
-        # Python
-        ["python3-pip"]="python3-pip"
-        ["python3-dev"]="python3-devel"
-        ["python3-venv"]="python3-virtualenv"
-        
-        # Node.js
-        ["nodejs"]="nodejs"
-        ["npm"]="npm"
-        
-        # Containers
-        ["docker.io"]="docker"
-        ["docker-compose"]="docker-compose"
-        
-        # Databases
-        ["postgresql"]="postgresql postgresql-server"
-        ["mysql-server"]="mysql-server"
-        ["redis-server"]="redis"
-        ["sqlite3"]="sqlite"
-        
-        # Web servers
-        ["nginx"]="nginx"
-        ["apache2"]="httpd"
-        
-        # Development libraries
-        ["libssl-dev"]="openssl-devel"
-        ["libcurl4-openssl-dev"]="libcurl-devel"
-        ["libxml2-dev"]="libxml2-devel"
-        ["zlib1g-dev"]="zlib-devel"
-        ["libffi-dev"]="libffi-devel"
-        
-        # Tools
-        ["net-tools"]="net-tools"
-        ["dnsutils"]="bind-utils"
-        ["htop"]="btop"
-        ["vim"]="vim-enhanced"
-        ["git"]="git"
-        ["curl"]="curl"
-        ["wget"]="wget"
-        
-        # Fonts
-        ["fonts-liberation"]="liberation-fonts"
-        
-        # GNOME
-        ["gnome-tweaks"]="gnome-tweaks"
-        ["gnome-shell-extensions"]="gnome-shell-extensions"
-        
-        # Applications
-        ["code"]="code"
-        ["firefox"]="firefox"
-        ["chromium-browser"]="chromium"
-        ["vlc"]="vlc"
-        ["gimp"]="gimp"
-    )
-    
     local total=0
     local mapped=0
     local skipped=0
+    local failed=0
+    
+    # Create progress indicator
+    local pkg_count=$(grep -cv '^#\|^$' "$ubuntu_packages" 2>/dev/null || echo 0)
+    local current=0
     
     while IFS= read -r pkg; do
-        ((total++))
-        
         # Skip empty lines and comments
         [ -z "$pkg" ] || [[ "$pkg" =~ ^# ]] && continue
         
-        # Skip kernel and system packages
-        [[ "$pkg" =~ ^linux- ]] || [[ "$pkg" =~ ^lib.*-dev$ ]] && { ((skipped++)); continue; }
+        ((total++))
+        ((current++))
         
-        # Check if package is in mapping
-        if [ -n "${PKG_MAP[$pkg]}" ]; then
-            echo "${PKG_MAP[$pkg]}" >> "$fedora_packages"
+        # Show progress every 10 packages
+        if [ $((current % 10)) -eq 0 ]; then
+            print_info "  Progress: $current/$pkg_count packages processed..."
+        fi
+        
+        # Skip kernel and certain system packages
+        if [[ "$pkg" =~ ^linux- ]] || [[ "$pkg" =~ ^(grub|udev|systemd) ]]; then
+            ((skipped++))
+            continue
+        fi
+        
+        # Try to find Fedora equivalent
+        local fedora_pkg=$(find_fedora_package "$pkg")
+        
+        if [ $? -eq 0 ] && [ -n "$fedora_pkg" ]; then
+            echo "$fedora_pkg" >> "$fedora_packages"
             ((mapped++))
+            # Show some successful mappings
+            [ $((current % 50)) -eq 0 ] && print_success "  ✓ $pkg → $fedora_pkg"
         else
-            # Try direct package name
-            if dnf info "$pkg" &>/dev/null; then
-                echo "$pkg" >> "$fedora_packages"
-                ((mapped++))
-            else
-                echo "$pkg" >> "$failed_packages"
-            fi
+            echo "$pkg" >> "$failed_packages"
+            ((failed++))
         fi
     done < "$ubuntu_packages"
     
-    print_success "Mapped $mapped/$total packages"
+    echo ""
+    print_success "Package mapping complete!"
+    print_info "  Mapped: $mapped packages"
+    print_info "  Skipped: $skipped packages (system/kernel)"
+    [ $failed -gt 0 ] && print_warning "  Failed: $failed packages"
+    
     if [ -s "$failed_packages" ]; then
-        local failed_count=$(wc -l < "$failed_packages")
-        print_warning "$failed_count packages could not be mapped"
-        print_info "See: $failed_packages"
+        echo ""
+        print_info "Failed packages saved to: $(basename "$failed_packages")"
+        print_info "These are often Ubuntu-specific or renamed packages."
     fi
 }
 

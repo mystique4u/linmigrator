@@ -170,7 +170,6 @@
       - neovim
       - tmux
       - screen
-      - htop
       - btop
       - ncdu
       - jq

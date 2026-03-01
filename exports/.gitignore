@@ -1,0 +1,15 @@
+# Exports directory
+# Encrypted exports are committed, but decrypted ones are not
+
+# Decrypted exports (folders)
+*/
+
+# Keep encrypted exports
+!*.tar.gz.enc
+
+# Keep this file
+!.gitignore
+
+# Temporary files
+*.tmp
+*.tar.gz

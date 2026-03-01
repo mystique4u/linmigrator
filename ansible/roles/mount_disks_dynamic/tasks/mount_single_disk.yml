@@ -1,0 +1,89 @@
+---
+# Mount a single disk - helper task
+
+- name: Parse mount entry
+  set_fact:
+    disk_device: "{{ mount_entry.split('|')[0] }}"
+    disk_mountpoint: "{{ mount_entry.split('|')[1] }}"
+    disk_fstype: "{{ mount_entry.split('|')[2] }}"
+
+- name: Check if device exists by UUID or LABEL
+  shell: |
+    # Try to find disk by UUID if it's in that format
+    if [[ "{{ disk_device }}" == UUID=* ]]; then
+      blkid -U $(echo "{{ disk_device }}" | cut -d= -f2)
+    elif [[ "{{ disk_device }}" == LABEL=* ]]; then
+      blkid -L $(echo "{{ disk_device }}" | cut -d= -f2)
+    else
+      # Check if device exists directly
+      [ -b "{{ disk_device }}" ] && echo "{{ disk_device }}" || echo ""
+    fi
+  register: resolved_device
+  changed_when: false
+  failed_when: false
+
+- name: Display device resolution
+  debug:
+    msg: "{{ disk_device }} resolves to: {{ resolved_device.stdout }}"
+  when: resolved_device.stdout != ""
+
+- name: Skip if device not found
+  debug:
+    msg: "⚠️  Device {{ disk_device }} not found, skipping {{ disk_mountpoint }}"
+  when: resolved_device.stdout == ""
+
+- name: Backup existing content if mountpoint has data
+  block:
+    - name: Check if mountpoint exists and has content
+      find:
+        paths: "{{ disk_mountpoint }}"
+        file_type: any
+      register: mountpoint_contents
+      when: resolved_device.stdout != ""
+    
+    - name: Backup existing content
+      synchronize:
+        src: "{{ disk_mountpoint }}/"
+        dest: "{{ backup_dir }}/{{ disk_mountpoint | basename }}_backup/"
+        archive: yes
+        recursive: yes
+      delegate_to: "{{ inventory_hostname }}"
+      when:
+        - resolved_device.stdout != ""
+        - mountpoint_contents.matched > 0
+  rescue:
+    - name: Backup failed but continue
+      debug:
+        msg: "Backup failed, but continuing with mount"
+
+- name: Ensure mountpoint directory exists
+  file:
+    path: "{{ disk_mountpoint }}"
+    state: directory
+    mode: '0755'
+  when: resolved_device.stdout != ""
+
+- name: Mount the disk
+  mount:
+    path: "{{ disk_mountpoint }}"
+    src: "{{ resolved_device.stdout }}"
+    fstype: "{{ disk_fstype }}"
+    opts: defaults,noatime
+    state: mounted
+  when: resolved_device.stdout != ""
+
+- name: Add to /etc/fstab for persistence
+  mount:
+    path: "{{ disk_mountpoint }}"
+    src: "{{ resolved_device.stdout }}"
+    fstype: "{{ disk_fstype }}"
+    opts: defaults,noatime
+    state: present
+  when: resolved_device.stdout != ""
+
+- name: Restore SELinux contexts
+  shell: restorecon -R "{{ disk_mountpoint }}"
+  when: 
+    - resolved_device.stdout != ""
+    - ansible_selinux.status == "enabled"
+  ignore_errors: yes

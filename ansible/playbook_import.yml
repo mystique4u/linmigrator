@@ -1,0 +1,153 @@
+---
+# Smart import playbook - uses export data dynamically
+# No hardcoded values, reads from export
+
+- name: LinMigrator - Smart Import
+  hosts: localhost
+  become: yes
+  gather_facts: yes
+  
+  vars:
+    migration_timestamp: "{{ ansible_date_time.iso8601_basic_short }}"
+    export_dir: ""  # Will be passed via -e
+    migration_log_dir: "/var/log/migration"
+  
+  pre_tasks:
+    - name: Display import banner
+      debug:
+        msg: |
+          ╔════════════════════════════════════════════════════════════╗
+          ║                                                            ║
+          ║         LinMigrator - Smart Import                        ║
+          ║         Dynamic Configuration from Export                 ║
+          ║                                                            ║
+          ╚════════════════════════════════════════════════════════════╝
+          
+          Target: {{ ansible_hostname }}
+          Export: {{ export_dir | basename }}
+          Timestamp: {{ migration_timestamp }}
+    
+    - name: Create migration log directory
+      file:
+        path: "{{ migration_log_dir }}"
+        state: directory
+        mode: '0755'
+    
+    - name: Verify export directory exists
+      stat:
+        path: "{{ export_dir }}"
+      register: export_check
+      failed_when: not export_check.stat.exists or not export_check.stat.isdir
+    
+    - name: Load export configuration
+      include_vars:
+        file: "{{ export_dir }}/export.conf"
+        name: export_config
+      when: export_check.stat.exists
+    
+    - name: Load GPU type
+      slurp:
+        src: "{{ export_dir }}/gpu_type.txt"
+      register: gpu_type_content
+      when: export_check.stat.exists
+    
+    - name: Set GPU type
+      set_fact:
+        detected_gpu_type: "{{ gpu_type_content.content | b64decode | trim }}"
+      when: gpu_type_content is defined
+    
+    - name: Pre-flight system check
+      include_tasks: tasks/preflight_check.yml
+  
+  tasks:
+    - name: Install base packages from Fedora mapped list
+      dnf:
+        name: "{{ item }}"
+        state: present
+      loop: "{{ lookup('file', export_dir + '/packages_fedora_mapped.txt').splitlines() }}"
+      when: 
+        - export_config.import_packages | default(true)
+        - item != ""
+      ignore_errors: yes
+      register: package_install_result
+    
+    - name: Mount disks based on export configuration
+      include_role:
+        name: mount_disks_dynamic
+      vars:
+        mount_points_file: "{{ export_dir }}/mount_points.txt"
+        export_conf: "{{ export_dir }}/export.conf"
+    
+    - name: Install developer tools
+      include_role:
+        name: developer_tools
+      when: export_config.install_developer_tools | default(true)
+    
+    - name: Install NVIDIA and CUDA
+      include_role:
+        name: nvidia_cuda
+      when: 
+        - detected_gpu_type is defined
+        - detected_gpu_type == "nvidia"
+        - export_config.import_nvidia | default(true)
+    
+    - name: Install WhiteSur theme
+      include_role:
+        name: whitesur_theme
+      when: export_config.import_whitesur_theme | default(true)
+    
+    - name: Configure system
+      include_role:
+        name: system_config
+  
+  post_tasks:
+    - name: Run post-migration validation
+      include_tasks: tasks/post_migration_validation.yml
+    
+    - name: Create package installation report
+      copy:
+        content: |
+          Package Installation Report
+          ==========================
+          
+          Successfully installed: {{ package_install_result.results | selectattr('failed', 'undefined') | list | length }}
+          Failed: {{ package_install_result.results | selectattr('failed', 'defined') | list | length }}
+          
+          Failed packages:
+          {% for result in package_install_result.results %}
+          {% if result.failed is defined and result.failed %}
+          - {{ result.item }}
+          {% endif %}
+          {% endfor %}
+        dest: "{{ migration_log_dir }}/package_report_{{ migration_timestamp }}.txt"
+        mode: '0644'
+      when: package_install_result is defined
+    
+    - name: Display import summary
+      debug:
+        msg: |
+          ╔════════════════════════════════════════════════════════════╗
+          ║                                                            ║
+          ║         Import Complete!                                  ║
+          ║                                                            ║
+          ╚════════════════════════════════════════════════════════════╝
+          
+          Summary:
+          - Export source: {{ export_dir | basename }}
+          - Packages processed: {{ package_install_result.results | length if package_install_result is defined else 0 }}
+          - GPU type: {{ detected_gpu_type | default('none') }}
+          - Desktop: {{ lookup('file', export_dir + '/desktop_environment.txt', errors='ignore') }}
+          
+          Next steps:
+          1. Review report: {{ migration_log_dir }}/package_report_{{ migration_timestamp }}.txt
+          2. Reboot the system: sudo reboot
+          3. Verify mounts: df -h
+          4. Test applications
+          
+          Logs: {{ migration_log_dir }}
+    
+    - name: Create migration completion marker
+      file:
+        path: "{{ migration_log_dir }}/import_complete_{{ migration_timestamp }}"
+        state: touch
+        mode: '0644'

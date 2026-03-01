@@ -1,0 +1,74 @@
+---
+# Dynamic mount disks role - reads from export configuration
+# No hardcoded disk paths!
+
+- name: Mount disks banner
+  debug:
+    msg: |
+      ╔════════════════════════════════════════════════════════════╗
+      ║            Mounting Disks Dynamically                     ║
+      ╚════════════════════════════════════════════════════════════╝
+
+- name: Load mount points configuration
+  shell: grep -v '^#' "{{ mount_points_file }}" | grep '|true$' || true
+  register: mount_points_to_import
+  changed_when: false
+  when: mount_points_file is defined
+
+- name: Display mount points to be imported
+  debug:
+    msg: "Will mount: {{ item }}"
+  loop: "{{ mount_points_to_import.stdout_lines }}"
+  when: mount_points_to_import.stdout_lines is defined
+
+- name: Auto-detect available unmounted disks
+  shell: |
+    lsblk -nlo NAME,SIZE,FSTYPE,MOUNTPOINT | awk '$4=="" && $3!="" {print "/dev/"$1,$2,$3}'
+  register: available_disks
+  changed_when: false
+
+- name: Display available disks
+  debug:
+    msg: "Available: {{ available_disks.stdout_lines }}"
+
+- name: Interactive disk selection prompt
+  pause:
+    prompt: |
+      
+      Detected disks that need to be mounted:
+      {{ mount_points_to_import.stdout_lines | join('\n') }}
+      
+      Available unmounted disks:
+      {{ available_disks.stdout_lines | join('\n') }}
+      
+      Please verify disks are attached before continuing.
+      Press Enter to continue or Ctrl+C to abort...
+  when: 
+    - mount_points_to_import.stdout_lines is defined
+    - mount_points_to_import.stdout_lines | length > 0
+
+- name: Create backup directory
+  file:
+    path: "/root/migration_backup_{{ ansible_date_time.epoch }}"
+    state: directory
+    mode: '0700'
+  register: backup_dir_result
+
+- name: Process each mount point
+  include_tasks: mount_single_disk.yml
+  vars:
+    mount_entry: "{{ item }}"
+    backup_dir: "{{ backup_dir_result.path }}"
+  loop: "{{ mount_points_to_import.stdout_lines }}"
+  when: 
+    - mount_points_to_import.stdout_lines is defined
+    - mount_points_to_import.stdout_lines | length > 0
+
+- name: Display mount status
+  shell: df -h | grep -E '(/home|/var)' || echo "No /home or /var mounts found"
+  register: mount_status
+  changed_when: false
+
+- name: Show mount results
+  debug:
+    msg: "{{ mount_status.stdout_lines }}"

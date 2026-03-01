@@ -136,10 +136,19 @@ detect_packages() {
     
     # Manual packages (compile list of user-installed only)
     print_info "  - Identifying manually installed packages..."
-    comm -23 <(apt-mark showmanual | sort) <(gzip -dc /var/log/installer/initial-status.gz 2>/dev/null | sed -n 's/^Package: //p' | sort) > "$export_dir/packages_manual.txt" 2>/dev/null || \
-    apt-mark showmanual > "$export_dir/packages_manual.txt"
+    comm -23 <(apt-mark showmanual | sort) <(gzip -dc /var/log/installer/initial-status.gz 2>/dev/null | sed -n 's/^Package: //p' | sort) > "$export_dir/packages_manual_raw.txt" 2>/dev/null || \
+    apt-mark showmanual > "$export_dir/packages_manual_raw.txt"
+    
+    # Filter out Ubuntu-specific and base system packages
+    grep -vE '^(ubuntu-|linux-image-|linux-headers-|linux-modules-|linux-generic|grub-|initramfs-|apt-|dpkg|dkms|language-pack-|shim-signed|cuda-repo-|lib[a-z0-9]+-dev|lib[a-z0-9]+t[0-9]+$|lib[a-z0-9]+-data$|lib[a-z0-9]+-tools$|lib[a-z0-9]+-examples$|ncurses-|init$|login$|lsb-release$|m17n-db$|nvidia-driver-)' \
+        "$export_dir/packages_manual_raw.txt" > "$export_dir/packages_manual.txt" || true
+    
+    # Remove common base/system utilities that come with Fedora by default
+    sed -i '/^bsdutils$/d; /^dash$/d; /^diffutils$/d; /^efibootmgr$/d; /^util-linux$/d; /^findutils$/d; /^grep$/d; /^gzip$/d; /^hostname$/d; /^wbritish$/d; /^ca-certificates$/d; /^curl$/d; /^wget$/d; /^software-properties-common$/d; /^gnupg$/d; /^dirmngr$/d; /^dialog$/d; /^dbus-x11$/d' "$export_dir/packages_manual.txt" 2>/dev/null || true
+    
     local manual_count=$(wc -l < "$export_dir/packages_manual.txt")
-    print_success "  Found $manual_count manually installed packages"
+    local raw_count=$(wc -l < "$export_dir/packages_manual_raw.txt")
+    print_success "  Found $manual_count manually installed packages (filtered from $raw_count)"
 }
 
 # Detect enabled services
